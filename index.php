@@ -1,11 +1,17 @@
 <?php
-$secureSession = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+$secureSession = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+    || strtolower((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https';
 session_set_cookie_params([
     'httponly' => true,
     'secure' => $secureSession,
     'samesite' => 'Lax',
 ]);
 session_start();
+header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
+header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: DENY');
+header('Referrer-Policy: strict-origin-when-cross-origin');
+header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
 $csrfToken = $_SESSION['csrf_token'] ??= bin2hex(random_bytes(32));
 $dbDir = __DIR__ . '/data'; if (!is_dir($dbDir)) mkdir($dbDir, 0775, true);
 $db = new PDO('sqlite:' . $dbDir . '/projects.sqlite'); $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION); $db->exec('PRAGMA foreign_keys=ON');
@@ -19,6 +25,7 @@ CREATE TABLE IF NOT EXISTS project_members (project_id INTEGER NOT NULL, user_id
 CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, project_id INTEGER, message TEXT NOT NULL, read_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS schema_versions (version INTEGER PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP);");
 $db->exec("INSERT OR IGNORE INTO schema_versions(version) VALUES(1)");
+$db->exec("CREATE TABLE IF NOT EXISTS login_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, ip TEXT NOT NULL, email TEXT NOT NULL, attempted_at TEXT DEFAULT CURRENT_TIMESTAMP)");
 // Keep a small rolling set of SQLite snapshots. Backups are best-effort and never block startup.
 $backupDir=$dbDir.'/backups';if(!is_dir($backupDir))@mkdir($backupDir,0775,true);$today=$backupDir.'/projects-'.date('Y-m-d').'.sqlite';if(!is_file($today)&&is_dir($backupDir)){try{$db->exec('VACUUM INTO '. $db->quote($today));}catch(Throwable $e){}}$backups=glob($backupDir.'/projects-*.sqlite')?:[];rsort($backups);foreach(array_slice($backups,14) as $old)@unlink($old);
 $gitRoots=array_values(array_filter(array_map('realpath',array_map('trim',explode(',',(string)getenv('PROJECT_GIT_ROOTS'))))));
@@ -73,7 +80,7 @@ $locationCols=$db->query("PRAGMA table_info(locations)")->fetchAll(PDO::FETCH_AS
 $taskCols=$db->query("PRAGMA table_info(tasks)")->fetchAll(PDO::FETCH_ASSOC);$taskNames=array_column($taskCols,'name');if(!in_array('due_date',$taskNames))$db->exec("ALTER TABLE tasks ADD COLUMN due_date TEXT DEFAULT ''");if(!in_array('priority',$taskNames))$db->exec("ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium'");
 // Migrate the original single-user database and provide a local account.
 $hasUser=(int)$db->query('SELECT COUNT(*) FROM users')->fetchColumn();
-if(!$hasUser){$s=$db->prepare('INSERT INTO users(name,email,password) VALUES(?,?,?)');$s->execute(['Samuele','samuele@localhost',password_hash('samuele',PASSWORD_DEFAULT)]);$uid=(int)$db->lastInsertId();$db->prepare('UPDATE projects SET user_id=? WHERE user_id IS NULL')->execute([$uid]);}
+if(!$hasUser){$bootstrapPassword=bin2hex(random_bytes(12));$s=$db->prepare('INSERT INTO users(name,email,password) VALUES(?,?,?)');$s->execute(['Samuele','samuele@localhost',password_hash($bootstrapPassword,PASSWORD_DEFAULT)]);$uid=(int)$db->lastInsertId();$db->prepare('UPDATE projects SET user_id=? WHERE user_id IS NULL')->execute([$uid]);error_log('Project Hub: account iniziale creato — email samuele@localhost, password temporanea: '.$bootstrapPassword.' (cambiarla dopo il primo accesso)');}
 $uid=(int)$db->query('SELECT id FROM users ORDER BY id LIMIT 1')->fetchColumn();
 // Optional Authentik/OIDC login. It is enabled only when all environment variables exist.
 $oidcIssuer=rtrim((string)getenv('AUTHENTIK_ISSUER'),'/');$oidcClient=(string)getenv('AUTHENTIK_CLIENT_ID');$oidcSecret=(string)getenv('AUTHENTIK_CLIENT_SECRET');$oidcRedirect=(string)(getenv('AUTHENTIK_REDIRECT_URI')?:((isset($_SERVER['HTTPS'])?'https':'http').'://'.($_SERVER['HTTP_HOST']??'localhost').'/index.php?oidc_callback=1'));
@@ -89,13 +96,13 @@ function user(){global $db; if(empty($_SESSION['user_id'])) return null; $s=$db-
 function auth(){ $u=user(); if(!$u) json(['error'=>'Autenticazione richiesta','auth'=>false]); return $u; }
 if(isset($_GET['api'])){$a=$_GET['api'];$in=body();
  if($a==='oidc-config'){json(['enabled'=>(bool)($oidcIssuer&&$oidcClient&&$oidcSecret)]);}
- if($a==='backup-status'){json(['enabled'=>is_dir($backupDir),'latest'=>basename((string)(glob($backupDir.'/projects-*.sqlite')[0]??''))]);}
+ if($a==='backup-status'){auth();json(['enabled'=>is_dir($backupDir),'latest'=>basename((string)(glob($backupDir.'/projects-*.sqlite')[0]??''))]);}
  if($a==='session'){json(['user'=>user(),'csrf'=>$csrfToken]);}
- if($a==='login'){ $s=$db->prepare('SELECT * FROM users WHERE email=?');$s->execute([strtolower(trim($in['email']??''))]);$u=$s->fetch(PDO::FETCH_ASSOC);if(!$u||!password_verify($in['password']??'',$u['password']))json(['error'=>'Email o password non validi']);session_regenerate_id(true);$_SESSION['user_id']=$u['id'];$_SESSION['csrf_token']=bin2hex(random_bytes(32));$csrfToken=$_SESSION['csrf_token'];json(['ok'=>1,'user'=>user(),'csrf'=>$csrfToken]); }
- if($a==='register'){ $name=trim($in['name']??'');$email=strtolower(trim($in['email']??''));$pass=$in['password']??'';if(!$name||!filter_var($email,FILTER_VALIDATE_EMAIL)||strlen($pass)<6)json(['error'=>'Inserisci nome, email valida e password di almeno 6 caratteri']);try{$s=$db->prepare('INSERT INTO users(name,email,password) VALUES(?,?,?)');$s->execute([$name,$email,password_hash($pass,PASSWORD_DEFAULT)]);session_regenerate_id(true);$_SESSION['user_id']=$db->lastInsertId();$_SESSION['csrf_token']=bin2hex(random_bytes(32));$csrfToken=$_SESSION['csrf_token'];json(['ok'=>1,'user'=>user(),'csrf'=>$csrfToken]);}catch(Exception $e){json(['error'=>'Questa email è già registrata']);}}
+ if($a==='login'){ requireCsrf();$loginEmail=strtolower(trim($in['email']??''));$loginIp=(string)($_SERVER['REMOTE_ADDR']??'');$db->exec("DELETE FROM login_attempts WHERE attempted_at < datetime('now','-1 day')");$st=$db->prepare("SELECT COUNT(*) FROM login_attempts WHERE ip=? AND email=? AND attempted_at > datetime('now','-15 minutes')");$st->execute([$loginIp,$loginEmail]);if((int)$st->fetchColumn()>=8)json(['error'=>'Troppi tentativi di accesso. Riprova tra qualche minuto.'],429);$s=$db->prepare('SELECT * FROM users WHERE email=?');$s->execute([$loginEmail]);$u=$s->fetch(PDO::FETCH_ASSOC);if(!$u||!password_verify($in['password']??'',$u['password'])){$db->prepare('INSERT INTO login_attempts(ip,email) VALUES(?,?)')->execute([$loginIp,$loginEmail]);json(['error'=>'Email o password non validi']);}$db->prepare('DELETE FROM login_attempts WHERE ip=? AND email=?')->execute([$loginIp,$loginEmail]);session_regenerate_id(true);$_SESSION['user_id']=$u['id'];$_SESSION['csrf_token']=bin2hex(random_bytes(32));$csrfToken=$_SESSION['csrf_token'];json(['ok'=>1,'user'=>user(),'csrf'=>$csrfToken]); }
+ if($a==='register'){ requireCsrf();$name=trim($in['name']??'');$email=strtolower(trim($in['email']??''));$pass=$in['password']??'';if(!$name||!filter_var($email,FILTER_VALIDATE_EMAIL)||strlen($pass)<8)json(['error'=>'Inserisci nome, email valida e password di almeno 8 caratteri']);try{$s=$db->prepare('INSERT INTO users(name,email,password) VALUES(?,?,?)');$s->execute([$name,$email,password_hash($pass,PASSWORD_DEFAULT)]);session_regenerate_id(true);$_SESSION['user_id']=$db->lastInsertId();$_SESSION['csrf_token']=bin2hex(random_bytes(32));$csrfToken=$_SESSION['csrf_token'];json(['ok'=>1,'user'=>user(),'csrf'=>$csrfToken]);}catch(Exception $e){json(['error'=>'Questa email è già registrata']);}}
  if($a==='logout'){if($_SERVER['REQUEST_METHOD']!=='POST')json(['error'=>'Metodo non consentito'],405);requireCsrf();session_destroy();json(['ok'=>1]);} $u=auth(); $uid=(int)$u['id'];
  $readOnlyApis=['oidc-config','backup-status','session','list','computers','members','notifications'];
- if(!in_array($a,$readOnlyApis,true)){if($_SERVER['REQUEST_METHOD']!=='POST')json(['error'=>'Metodo non consentito'],405);if(!in_array($a,['login','register'],true))requireCsrf();}
+ if(!in_array($a,$readOnlyApis,true)){if($_SERVER['REQUEST_METHOD']!=='POST')json(['error'=>'Metodo non consentito'],405);requireCsrf();}
  function projectRole($id,$uid){global $db;$s=$db->prepare('SELECT CASE WHEN user_id=? THEN "owner" ELSE (SELECT role FROM project_members WHERE project_id=projects.id AND user_id=?) END FROM projects WHERE id=?');$s->execute([$uid,$uid,(int)$id]);return $s->fetchColumn()?:null;}
  function requireProject($id,$uid,$write=false){$role=projectRole($id,$uid);if(!$role||($write&&!in_array($role,['owner','editor'],true)))json(['error'=>'Non autorizzato']);return $role;}
  function event($uid,$pid,$message){global $db;$s=$db->prepare('INSERT INTO notifications(user_id,project_id,message) SELECT user_id,?,? FROM (SELECT user_id FROM projects WHERE id=? UNION SELECT user_id FROM project_members WHERE project_id=?) WHERE user_id<>?');$s->execute([$pid,$message,$pid,$pid,$uid]);}
@@ -133,12 +140,11 @@ if(isset($_GET['api'])){$a=$_GET['api'];$in=body();
     <form id="authForm" novalidate>
       <label id="authNameWrap" hidden>Nome <input id="authName" autocomplete="name"></label>
       <label>Email <input id="authEmail" type="email" required autocomplete="email" placeholder="tu@email.it"></label>
-      <label>Password <input id="authPassword" type="password" required minlength="6" autocomplete="current-password"></label>
+      <label>Password <input id="authPassword" type="password" required minlength="8" autocomplete="current-password"></label>
       <button class="primary" type="submit">Accedi</button>
       <p id="authError" class="auth-error" role="alert"></p>
     </form>
     <button class="auth-switch" id="authSwitch" type="button">Non hai un account? Registrati</button>
-    <small class="demo-hint">Account demo: samuele@localhost / samuele</small>
   </div>
 </div>
 <div class="app">

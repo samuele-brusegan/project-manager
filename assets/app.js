@@ -367,7 +367,7 @@ function detail(id) {
     <div class="detail-route">${routeFor(p)}<span class="detail-route-right">${stampFor(p)}</span></div>
     ${p.description ? `<p class="detail-desc">${esc(p.description)}</p>` : ''}
     <div class="detail-section"><h3>Percorsi e repository</h3>
-      ${locations.map(l => `<div class="location"><span><b>${esc(l.computer || 'Porto')}</b></span><span class="mono">${esc(l.folder)}</span><span>${canEdit ? `<button type="button" aria-label="Modifica percorso" onclick="editLocation(${l.id},${p.id},'${esc(l.folder).replace(/'/g,"\\'")}')">✎</button><button type="button" aria-label="Rimuovi percorso" onclick="removeLocation(${l.id},${p.id})">×</button>` : ''}</span></div>`).join('') || '<p class="sub">Nessun percorso locale associato.</p>'}
+      ${locations.map(l => `<div class="location"><span><b>${esc(l.computer || 'Porto')}</b></span><span class="mono">${esc(l.folder)}</span><span>${canEdit ? `<button type="button" aria-label="Modifica percorso" onclick="editLocation(${l.id},${p.id})">✎</button><button type="button" aria-label="Rimuovi percorso" onclick="removeLocation(${l.id},${p.id})">×</button>` : ''}</span></div>`).join('') || '<p class="sub">Nessun percorso locale associato.</p>'}
       ${reveal('＋ Associa un percorso', `<select id="locationComputer" aria-label="Macchina">${computers.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><input id="newFolder" placeholder="/percorso/della/repo"><button type="button" aria-label="Aggiungi percorso" onclick="addLocation(${p.id})">＋</button>`)}
       ${canEdit && !computers.length ? `<button type="button" class="text-button" onclick="addComputer()">Registra prima una macchina →</button>` : ''}
       ${p.repo_url ? `<div class="detail-repo"><a class="link" target="_blank" rel="noopener" href="${esc(p.repo_url)}">${esc(p.repo_url)}</a>
@@ -445,7 +445,8 @@ async function addLocation(pid) {
   try { await api('location', {project_id: pid, computer_id, folder}); await load(); detail(pid); }
   catch(e) { notice(e.message, true); }
 }
-async function editLocation(id, pid, folder) {
+async function editLocation(id, pid) {
+  const folder = (projects.find(p => p.id === pid)?.locations || []).find(l => l.id === id)?.folder || '';
   const v = await uiPrompt({title:'Modifica percorso', message:'Aggiorna il percorso locale associato a questo progetto.', fields:[{name:'folder', label:'Percorso cartella', value: folder, required:true}]});
   if (v === null || v === undefined) return;
   const input = typeof v === 'string' ? v : v.folder;

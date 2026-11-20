@@ -7,7 +7,7 @@ Richiede PHP 8+ con `pdo_sqlite`:
 ```bash
 php -S localhost:8080
 ```
-Al primo avvio viene creato il database SQLite e l’account demo **samuele@localhost / samuele**. È possibile registrare nuovi account dalla schermata di accesso; ogni utente vede e modifica solo i propri progetti.
+Al primo avvio viene creato il database SQLite e un account iniziale **samuele@localhost** con password casuale, stampata una sola volta nel log degli errori PHP (`docker compose logs app` o stderr di `php -S`): cambiarla subito dopo il primo accesso. È possibile registrare nuovi account dalla schermata di accesso; ogni utente vede e modifica solo i propri progetti.
 
 ## Avvio con Docker
 
@@ -76,9 +76,15 @@ Il recupero parte quando si esce dal campo URL e viene ripetuto lato server dura
 
 ## Note di sicurezza
 
-Il servizio Git riceve percorsi locali dall’utente ma applica una whitelist di directory, usa `subprocess` senza shell e accetta solo operazioni predefinite. In produzione è consigliabile limitarne l’ascolto all’interfaccia Docker e proteggerlo con firewall oltre al token. Cambiare inoltre la password demo al primo avvio e usare HTTPS per le sessioni.
+Con Docker, Apache nega l’accesso web a `data/` (SQLite e backup), a tutte le directory e ai file nascosti (`.git`, `.env`, `.claude`, …) e alle estensioni non servite dal frontend (`docker/security.conf`). La stessa regola è consigliata dietro un reverse proxy.
 
-Le richieste modificanti dell’app usano un token CSRF associato alla sessione. I cookie di sessione sono `HttpOnly`, usano `SameSite=Lax` e diventano `Secure` quando l’app è servita in HTTPS.
+Con `php -S` non esiste un equivalente nativo: il server integrato espone qualunque file sotto la root, quindi `data/` e i sorgenti restano raggiungibili. Per uso reale usare Docker o un virtual host Apache/nginx con regole analoghe.
+
+Il servizio Git riceve percorsi locali dall’utente ma applica una whitelist di directory, usa `subprocess` senza shell e accetta solo operazioni predefinite. In produzione è consigliabile limitarne l’ascolto all’interfaccia Docker e proteggerlo con firewall oltre al token. Usare sempre HTTPS per le sessioni.
+
+Tutte le richieste API, login compreso, richiedono un token CSRF associato alla sessione. I cookie di sessione sono `HttpOnly`, usano `SameSite=Lax` e diventano `Secure` quando l’app è servita in HTTPS (o dietro un proxy che imposta `X-Forwarded-Proto: https`). Il login è limitato a 8 tentativi falliti per IP+email ogni 15 minuti e le password richiedono almeno 8 caratteri.
+
+L’app invia header di sicurezza: `Content-Security-Policy`, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` e `Permissions-Policy`.
 
 Per i link di progetto la favicon viene cercata prima su `<origine>/favicon.ico`; se il dominio non la espone, l’interfaccia usa il servizio favicon di DuckDuckGo come fallback. Non vengono scaricati né salvati file favicon nel database.
 
