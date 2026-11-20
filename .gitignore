@@ -2,3 +2,11 @@ data/*.sqlite
 data/*.sqlite-*
 data/
 TODO.md
+.env
+.agent/
+.agents/
+.claude/
+.codex/
+.devin/
+.opencode/
+*.swp
