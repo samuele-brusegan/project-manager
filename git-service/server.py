@@ -151,7 +151,11 @@ class GitRequestHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    bind = os.environ.get("GIT_SERVICE_BIND", "0.0.0.0")
+    # Loopback by default: the Docker app reaches it via host.docker.internal,
+    # so set GIT_SERVICE_BIND explicitly (e.g. the LAN IP or 0.0.0.0) when the
+    # container must connect. The bearer token is the only auth — do not expose
+    # the port on untrusted networks without a firewall.
+    bind = os.environ.get("GIT_SERVICE_BIND", "127.0.0.1")
     port = int(os.environ.get("GIT_SERVICE_PORT", "8090"))
     server = ThreadingHTTPServer((bind, port), GitRequestHandler)
     print(f"Git service listening on {bind}:{port}; authorized roots: {', '.join(map(str, ROOTS))}", flush=True)

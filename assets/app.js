@@ -8,6 +8,7 @@ let projects = [], currentUser = null, registerMode = false, currentView = 'over
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+const safeUrl = u => /^https?:\/\//i.test(String(u || '')) ? String(u) : '#';
 const PRIORITY = {low:'Bassa', medium:'Media', high:'Alta'};
 
 async function api(action, data) {
@@ -288,7 +289,7 @@ function cardHtml(p) {
     <p class="desc">${esc(p.description) || 'Nessuna descrizione aggiunta.'}</p>
     ${stampFor(p)}
     <div class="card-foot">${routeFor(p)}<span>${ts.length ? done + '/' + ts.length + ' task' : 'nessun task'}</span>
-    ${quickLink ? `<a class="card-quick-link" href="${esc(quickLink.url)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${faviconMarkup(quickLink)}<span>${esc(quickLink.label || quickLink.url)}</span></a>` : ''}</div>
+    ${quickLink ? `<a class="card-quick-link" href="${esc(safeUrl(quickLink.url))}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${faviconMarkup(quickLink)}<span>${esc(quickLink.label || quickLink.url)}</span></a>` : ''}</div>
   </article>`;
 }
 
@@ -348,7 +349,7 @@ async function moorToPort(cid) {
 function projectLinkRows(p) {
   const canEdit = ['owner','editor'].includes(p.member_role);
   return (p.links || []).map(l =>
-    `<div class="project-link-row"><a class="project-link" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${faviconMarkup(l)}<span><b>${esc(l.label || l.url)}</b><small>${esc(l.url)}</small></span></a>${canEdit ? `<button type="button" class="remove-project-link" aria-label="Rimuovi link" onclick="removeProjectLink(${l.id},${p.id})">×</button>` : ''}</div>`).join('');
+    `<div class="project-link-row"><a class="project-link" href="${esc(safeUrl(l.url))}" target="_blank" rel="noopener noreferrer">${faviconMarkup(l)}<span><b>${esc(l.label || l.url)}</b><small>${esc(l.url)}</small></span></a>${canEdit ? `<button type="button" class="remove-project-link" aria-label="Rimuovi link" onclick="removeProjectLink(${l.id},${p.id})">×</button>` : ''}</div>`).join('');
 }
 function taskRow(t, pid) {
   return `<div class="task-row"><label class="detail-task ${+t.done ? 'is-done' : ''}"><input type="checkbox" ${+t.done ? 'checked' : ''} onchange="toggleTask(${t.id},${pid},this.checked)"><span>${esc(t.title)}<small class="task-priority ${esc(t.priority||'medium')}">${PRIORITY[t.priority]||'Media'}</small>${taskDue(t)}</span></label>
@@ -370,7 +371,7 @@ function detail(id) {
       ${locations.map(l => `<div class="location"><span><b>${esc(l.computer || 'Porto')}</b></span><span class="mono">${esc(l.folder)}</span><span>${canEdit ? `<button type="button" aria-label="Modifica percorso" onclick="editLocation(${l.id},${p.id})">✎</button><button type="button" aria-label="Rimuovi percorso" onclick="removeLocation(${l.id},${p.id})">×</button>` : ''}</span></div>`).join('') || '<p class="sub">Nessun percorso locale associato.</p>'}
       ${reveal('＋ Associa un percorso', `<select id="locationComputer" aria-label="Macchina">${computers.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><input id="newFolder" placeholder="/percorso/della/repo"><button type="button" aria-label="Aggiungi percorso" onclick="addLocation(${p.id})">＋</button>`)}
       ${canEdit && !computers.length ? `<button type="button" class="text-button" onclick="addComputer()">Registra prima una macchina →</button>` : ''}
-      ${p.repo_url ? `<div class="detail-repo"><a class="link" target="_blank" rel="noopener" href="${esc(p.repo_url)}">${esc(p.repo_url)}</a>
+      ${p.repo_url ? `<div class="detail-repo"><a class="link" target="_blank" rel="noopener" href="${esc(safeUrl(p.repo_url))}">${esc(p.repo_url)}</a>
         <p class="sub">Ultimo commit: <b>${esc(p.last_commit) || 'non indicato'}</b>${p.commit_date ? ' · ' + esc(fmtDate(p.commit_date)) : ''}${p.default_branch ? ' · <span class="mono">' + esc(p.default_branch) + '</span>' : ''}</p>
         ${canEdit ? `<button type="button" class="secondary" onclick="syncGit(${p.id})">Aggiorna da repository</button> <button type="button" class="secondary" onclick="showTree(${p.id})">Git tree</button>` : ''}</div>` : ''}</div>
     <div class="detail-section"><h3>Task · ${tasks.filter(t => !+t.done).length} da completare</h3>
@@ -729,4 +730,6 @@ api('oidc-config').then(x => {
   }
 }).catch(() => {});
 
+const urlAuthError = new URLSearchParams(location.search).get('auth_error');
+if (urlAuthError) $('#authError').textContent = urlAuthError;
 start();
