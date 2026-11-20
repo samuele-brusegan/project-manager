@@ -1,0 +1,11 @@
+.git
+.gitignore
+.codex
+.agents
+data
+.env
+*.sqlite
+*.sqlite-*
+README.md
+TODO.md
+tests

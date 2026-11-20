@@ -1,0 +1,6 @@
+# Sviluppo locale: monta l'intera directory nel container così le modifiche
+# ai sorgenti sono live senza rebuild (data/ resta persistente nello stesso path).
+services:
+  app:
+    volumes:
+      - .:/var/www/html

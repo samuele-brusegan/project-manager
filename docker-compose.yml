@@ -1,0 +1,20 @@
+services:
+  app:
+    build:
+      context: .
+    container_name: project-hub
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${PROJECT_HUB_PORT:-8080}:80"
+    environment:
+      GIT_SERVICE_URL: ${GIT_SERVICE_URL:-}
+      GIT_SERVICE_TOKEN: ${GIT_SERVICE_TOKEN:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      AUTHENTIK_ISSUER: ${AUTHENTIK_ISSUER:-}
+      AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID:-}
+      AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_CLIENT_SECRET:-}
+      AUTHENTIK_REDIRECT_URI: ${AUTHENTIK_REDIRECT_URI:-}
+    volumes:
+      - ./data:/var/www/html/data
