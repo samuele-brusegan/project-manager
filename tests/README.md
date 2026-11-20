@@ -6,6 +6,12 @@ Il controllo statico si esegue con:
 php tests/smoke.php
 ```
 
+Per verificare i controlli di sicurezza con database isolato e due utenti (richiede Docker e l'immagine `project-manager-app` già compilata):
+
+```bash
+python3 tests/security.py
+```
+
 Per il test browser manuale/automatizzabile, avviare l’app nel container PHP-FPM o con:
 
 ```bash

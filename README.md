@@ -71,7 +71,7 @@ Impostare `AUTHENTIK_ISSUER`, `AUTHENTIK_CLIENT_ID`, `AUTHENTIK_CLIENT_SECRET` e
 
 ## Git e percorsi locali
 
-Associare almeno un percorso che contenga una directory `.git`. Con Docker il percorso viene verificato dal servizio Git sull’host; con l’avvio PHP locale viene usata la whitelist `PROJECT_GIT_ROOTS`. Per un URL GitHub viene interrogata l’API pubblica di GitHub e vengono importati nome, descrizione, branch predefinito e ultimo commit. I repository privati richiedono `GITHUB_TOKEN` nell’ambiente PHP e che il loro owner sia in `GITHUB_TOKEN_OWNERS`; senza token o in caso di indisponibilità temporanea il salvataggio conserva i dati digitati manualmente.
+Associare almeno un percorso che contenga una directory `.git`. Con Docker il percorso viene verificato dal servizio Git sull’host; con l’avvio PHP locale viene usata la whitelist `PROJECT_GIT_ROOTS`. Per un URL GitHub viene interrogata l’API pubblica di GitHub e vengono importati nome, descrizione, branch predefinito e ultimo commit. I repository privati richiedono `GITHUB_TOKEN`, un owner in `GITHUB_TOKEN_OWNERS` e l'ID dell'utente in `GITHUB_TOKEN_USERS`. Gli utenti non autorizzati effettuano richieste anonime; in caso di indisponibilità il salvataggio conserva i dati digitati manualmente.
 
 Il recupero parte quando si esce dal campo URL e viene ripetuto lato server durante il salvataggio. Sono accettati URL `https://github.com/<owner>/<repo>` anche con suffisso `.git`.
 
@@ -83,13 +83,13 @@ Con `php -S` non esiste un equivalente nativo: il server integrato espone qualun
 
 Il servizio Git riceve percorsi locali dall’utente ma applica una whitelist di directory, usa `subprocess` senza shell e accetta solo operazioni predefinite. Ascolta su `127.0.0.1` per impostazione predefinita (`GIT_SERVICE_BIND` per cambiare): è protetto solo dal bearer token, quindi non esporlo su reti non fidate senza firewall. Usare sempre HTTPS per le sessioni.
 
-Tutte le richieste API, login compreso, richiedono un token CSRF associato alla sessione. I cookie di sessione sono `HttpOnly`, usano `SameSite=Lax` e diventano `Secure` quando l’app è servita in HTTPS (o dietro un proxy che imposta `X-Forwarded-Proto: https`). Il login è limitato a 8 tentativi falliti per IP+email e 25 per email ogni 15 minuti, e le password richiedono almeno 8 caratteri.
+Tutte le richieste API, login compreso, richiedono un token CSRF associato alla sessione. I cookie di sessione sono `HttpOnly`, usano `SameSite=Lax` e diventano `Secure` quando l’app è servita in HTTPS (o dietro un proxy che imposta `X-Forwarded-Proto: https`). Il login è limitato a 8 tentativi falliti per IP+email e 100 per IP ogni 15 minuti; una protezione distribuita richiede ulteriori limiti al reverse proxy, e le password richiedono almeno 8 caratteri.
 
 Con Docker la porta è pubblicata solo su `127.0.0.1` per impostazione predefinita (`PROJECT_HUB_BIND`): l’app va raggiunta tramite un reverse proxy HTTPS. Impostare `PROJECT_HUB_BIND=0.0.0.0` solo per l’accesso diretto dalla LAN.
 
-`git-info` e `git-tree` richiedono che il percorso sia registrato come `locations.folder` di un progetto a cui l’utente ha accesso: nessun utente può interrogare repository altrui anche se il percorso è nelle root autorizzate. `repo_url` accetta solo URL HTTP/HTTPS validi (niente `javascript:` o `data:`) e il frontend applica un’ulteriore validazione degli `href`.
+`git-info` e `git-tree` sono riservati agli account elencati in `GIT_SERVICE_USERS` e richiedono che il percorso sia registrato come `locations.folder` di un progetto accessibile. Questi account sono fidati: possono associare e interrogare qualsiasi repository nelle root configurate. `repo_url` accetta solo URL HTTP/HTTPS validi (niente `javascript:` o `data:`) e il frontend applica un’ulteriore validazione degli `href`.
 
-`GITHUB_TOKEN` viene inviato a `api.github.com` solo per repository il cui owner è elencato in `GITHUB_TOKEN_OWNERS` (separati da virgola); per tutti gli altri la richiesta è anonima e vede solo dati pubblici. `ALLOW_REGISTRATION=0` disabilita la registrazione pubblica (consigliato su VPS condivise).
+`GITHUB_TOKEN` viene usato solo per gli account elencati in `GITHUB_TOKEN_USERS` e per gli owner elencati in `GITHUB_TOKEN_OWNERS` (liste separate da virgole). `GIT_SERVICE_USERS` e `GITHUB_TOKEN_USERS` contengono ID numerici di account fidati già creati, consultabili dall'amministratore nella tabella `users` del database; lasciarle vuote disabilita l'accesso alle rispettive integrazioni privilegiate. La registrazione è disabilitata per default; `ALLOW_REGISTRATION=1` la abilita.
 
 L’app invia header di sicurezza: `Content-Security-Policy`, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` e `Permissions-Policy`.
 
