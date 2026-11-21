@@ -110,6 +110,8 @@ if(isset($_GET['api'])){$a=$_GET['api'];$in=body();
  if($a==='logout'){if($_SERVER['REQUEST_METHOD']!=='POST')json(['error'=>'Metodo non consentito'],405);requireCsrf();session_destroy();json(['ok'=>1]);} $u=auth(); $uid=(int)$u['id'];
  $readOnlyApis=['oidc-config','backup-status','session','list','computers','members','notifications'];
  if(!in_array($a,$readOnlyApis,true)){if($_SERVER['REQUEST_METHOD']!=='POST')json(['error'=>'Metodo non consentito'],405);requireCsrf();}
+ if($a==='account-name'){$name=trim((string)($in['name']??''));if($name==='' || strlen($name)>480)json(['error'=>'Inserisci un nome valido (massimo 120 caratteri)']);$db->prepare('UPDATE users SET name=? WHERE id=?')->execute([$name,$uid]);json(['ok'=>1,'user'=>user()]);}
+ if($a==='account-password'){$old=(string)($in['current_password']??'');$new=(string)($in['new_password']??'');$s=$db->prepare('SELECT password FROM users WHERE id=?');$s->execute([$uid]);if(!password_verify($old,(string)$s->fetchColumn()))json(['error'=>'Password attuale non corretta'],403);if(strlen($new)<8)json(['error'=>'La nuova password deve contenere almeno 8 caratteri']);$db->prepare('UPDATE users SET password=? WHERE id=?')->execute([password_hash($new,PASSWORD_DEFAULT),$uid]);session_regenerate_id(true);$_SESSION['csrf_token']=bin2hex(random_bytes(32));json(['ok'=>1,'csrf'=>$_SESSION['csrf_token']]);}
  function projectRole($id,$uid){global $db;$s=$db->prepare('SELECT CASE WHEN user_id=? THEN "owner" ELSE (SELECT role FROM project_members WHERE project_id=projects.id AND user_id=?) END FROM projects WHERE id=?');$s->execute([$uid,$uid,(int)$id]);return $s->fetchColumn()?:null;}
  function requireProject($id,$uid,$write=false){$role=projectRole($id,$uid);if(!$role||($write&&!in_array($role,['owner','editor'],true)))json(['error'=>'Non autorizzato']);return $role;}
  function event($uid,$pid,$message){global $db;$s=$db->prepare('INSERT INTO notifications(user_id,project_id,message) SELECT user_id,?,? FROM (SELECT user_id FROM projects WHERE id=? UNION SELECT user_id FROM project_members WHERE project_id=?) WHERE user_id<>?');$s->execute([$pid,$message,$pid,$pid,$uid]);}
@@ -136,7 +138,7 @@ if(isset($_GET['api'])){$a=$_GET['api'];$in=body();
  if($a==='git-tree'){if(!gitPathAllowed($in['path']??'',$uid))json(['error'=>'Percorso non associato a un progetto a cui hai accesso']);if($gitServiceUrl){try{json(gitServiceRequest('git-tree',$in['path']??''));}catch(Throwable $e){json(['error'=>$e->getMessage()]);}}$path=validGitPath($in['path']??'');if(!$path)json(['error'=>'Percorso Git non valido o non autorizzato']);$log=shell_exec('git -C '.escapeshellarg($path).' log --all --date=short --pretty=format:%h|%ad|%an|%D|%s --max-count=120 2>/dev/null');json(['ok'=>1,'commits'=>array_values(array_filter(explode("\n",trim((string)$log))))]);}
  if($a==='github-info'){try{json(['ok'=>1]+githubInfo($in['url']??'',$u));}catch(Throwable $e){json(['error'=>$e->getMessage()]);}}
 }
-?><!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Project Hub di carico</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet"><link rel="stylesheet" href="assets/style.css?v=2"></head><body>
+?><!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Project Hub</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet"><link rel="stylesheet" href="assets/style.css?v=8"><link rel="stylesheet" href="assets/workspace.css?v=4"></head><body>
 <div id="loginScreen" class="login-screen" hidden>
   <div class="waybill login-box">
     <div class="waybill-head">
@@ -159,21 +161,12 @@ if(isset($_GET['api'])){$a=$_GET['api'];$in=body();
 <aside>
   <div class="brand"><span class="brand-stamp">ph</span><span>project<b>hub</b></span></div>
   <nav aria-label="Navigazione principale">
-    <button type="button" class="nav active" data-view="overview"><svg viewBox="0 0 16 16"><path d="M2 13V6l6-4 6 4v7"/><path d="M5.5 13v-4h5v4"/></svg> Panoramica</button>
-    <button type="button" class="nav" data-view="projects"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1"/><path d="M2 7h12M6 7v6"/></svg> Progetti <b id="navCount">0</b></button>
-    <button type="button" class="nav" data-view="tasks"><svg viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-8"/></svg> Task</button>
-    <button type="button" class="nav" data-view="computers"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="8" rx="1"/><path d="M5 14h6M8 11v3"/></svg> Computer</button>
+    <button type="button" class="nav active" data-view="overview"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1"/><path d="M2 7h12M6 7v6"/></svg> Spazio di lavoro <b id="navCount">0</b></button>
+    <button type="button" class="nav" data-view="projects"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5V3h5l2 2h5v8H2z"/></svg> Progetti</button>
+    <button type="button" class="nav" data-view="map"><svg viewBox="0 0 16 16"><circle cx="3" cy="4" r="2"/><circle cx="13" cy="4" r="2"/><circle cx="8" cy="12" r="2"/><path d="M5 4h6M4 6l3 4M12 6l-3 4"/></svg> Mappa</button>
   </nav>
   <div class="side-bottom">
-    <div class="tip">
-      <strong>Dove vivono i progetti</strong>
-      <p>Registra computer e cartelle locali: saprai sempre dove sta ogni repository.</p>
-    </div>
-    <div class="profile">
-      <div class="avatar" id="sideAvatar" aria-hidden="true">–</div>
-      <div><strong id="sideName">…</strong><small>Area personale</small></div>
-      <button type="button" class="profile-more" id="profileMore" aria-label="Menu utente" aria-haspopup="true">⋮</button>
-    </div>
+    <button type="button" class="profile profile-button" id="profileMore"><span class="avatar" id="sideAvatar" aria-hidden="true">–</span><span><strong id="sideName">…</strong><small>Gestisci account</small></span></button>
   </div>
 </aside>
 <main>
@@ -182,35 +175,28 @@ if(isset($_GET['api'])){$a=$_GET['api'];$in=body();
     <div class="crumb">Project Hub <span aria-hidden="true">/</span> <strong id="pageTitle">Panoramica</strong></div>
     <div class="header-actions">
       <button type="button" class="icon-btn" id="notifBtn" title="Notifiche" aria-label="Notifiche"><svg viewBox="0 0 16 16"><path d="M8 2a4 4 0 0 0-4 4c0 4-1.5 5-1.5 5h11S12 10 12 6a4 4 0 0 0-4-4z"/><path d="M6.5 13.5a1.5 1.5 0 0 0 3 0"/></svg><i class="notif-dot" hidden></i></button>
-      <button type="button" class="avatar small" id="headerAvatar" aria-label="Menu utente">–</button>
+      <button type="button" class="avatar small" id="headerAvatar" aria-label="Gestisci account">–</button>
     </div>
   </header>
   <section class="content">
     <div class="welcome">
       <div><h1 id="greeting">Project Hub</h1><p class="sub" id="fleetLine">Caricamento…</p></div>
-      <button type="button" class="primary" id="newBtn">＋ Nuovo progetto</button>
+      <div class="home-actions"><button type="button" class="secondary" id="quickTaskBtn">Nuovo task</button><button type="button" class="primary" id="newBtn">Nuovo progetto</button></div>
     </div>
-    <div class="stats" role="group" aria-label="Riepilogo">
-      <div class="stat"><small>Da rivedere</small><strong id="openStat">0</strong><em id="openDelta">da risolvere</em></div>
-      <div class="stat"><small>Task scaduti</small><strong id="taskStat">0</strong><em>in ritardo</em></div>
-      <div class="stat"><small>Aggiornati di recente</small><strong id="commitStat">0</strong><em>progetti</em></div>
-    </div>
+
     <div class="section-head">
-      <div><h2 id="sectionTitle">Progetti</h2><p id="sectionSubtitle">ordinati per ultimo aggiornamento</p></div>
+
       <div class="tools">
         <div class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg><input id="search" placeholder="Cerca progetto…" aria-label="Cerca"></div>
-        <select id="filter" aria-label="Filtra per stato"><option value="all">Tutti gli stati</option><option value="active">In corso</option><option value="paused">In pausa</option><option value="completed">Completati</option></select>
-        <select id="taskFilter" hidden aria-label="Filtra per scadenza"><option value="all">Tutti i task aperti</option><option value="today">Oggi</option><option value="week">Prossimi 7 giorni</option><option value="overdue">Scaduti</option><option value="nodate">Senza scadenza</option></select>
-        <select id="taskPriorityFilter" hidden aria-label="Filtra per priorità"><option value="all">Tutte le priorità</option><option value="high">Alta priorità</option><option value="medium">Media priorità</option><option value="low">Bassa priorità</option></select>
-        <div class="view-toggle" role="group" aria-label="Vista"><button type="button" class="view-btn active" data-viewmode="manifest" aria-label="Vista tabella"><svg viewBox="0 0 16 16"><path d="M2 4h12M2 8h12M2 12h12"/></svg></button><button type="button" class="view-btn" data-viewmode="cards" aria-label="Vista schede"><svg viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg></button></div>
+        <select id="projectSort" aria-label="Ordina progetti"><option value="stamp">Più recenti</option><option value="name">Nome</option><option value="colli">Task aperti</option></select>
+        <details class="filters"><summary>Filtri</summary><div class="filter-panel"><label>Stato<select id="filter"><option value="all">Tutti gli stati</option><option value="active">In corso</option><option value="paused">In pausa</option><option value="completed">Completati</option></select></label></div></details>
+
       </div>
     </div>
     <div id="projectGrid" class="manifest-host"></div>
-    <div id="empty" class="empty" hidden>
-      <svg class="empty-mark" viewBox="0 0 48 48" aria-hidden="true"><rect x="6" y="10" width="36" height="28" rx="2"/><path d="M6 18h36M14 26h12M14 31h8"/></svg>
-      <h3>Nessun progetto</h3><p>Crea il primo progetto per iniziare.</p>
-      <button type="button" class="primary" id="emptyBtn">＋ Nuovo progetto</button>
-    </div>
+
+    <section id="accountPage" class="project-page" aria-label="Account"><button type="button" class="back-button" id="accountBack">← Torna allo spazio di lavoro</button><h1>Account</h1><div class="account-layout"><section class="account-section"><h2>Profilo</h2><form id="accountForm"><label>Nome<input id="accountName" required maxlength="120" autocomplete="name"></label><label>Email<input id="accountEmail" type="email" disabled></label><button class="primary">Salva nome</button></form></section><section class="account-section"><h2>Password</h2><p>Per gli account con accesso tramite password.</p><form id="passwordForm"><label>Password attuale<input id="currentPassword" type="password" required autocomplete="current-password"></label><label>Nuova password<input id="newPassword" type="password" required minlength="8" autocomplete="new-password"></label><label>Conferma nuova password<input id="confirmPassword" type="password" required minlength="8" autocomplete="new-password"></label><button class="secondary">Cambia password</button></form></section><section class="account-section"><h2>Preferenze e sessione</h2><button type="button" class="secondary" id="themeToggle">Tema chiaro</button> <button type="button" class="secondary" id="logoutBtn">Esci</button></section></div></section>
+    <section id="detailModal" class="project-page" aria-label="Dettaglio progetto"><button type="button" id="detailClose" class="back-button">← Torna alla vista precedente</button><div id="detail"></div></section>
   </section>
 </main>
 </div>
@@ -230,6 +216,4 @@ if(isset($_GET['api'])){$a=$_GET['api'];$in=body();
     <div class="form-actions"><button type="button" class="secondary" id="cancel">Annulla</button><button class="primary">Salva progetto</button></div>
   </form>
 </div></div>
-<div class="modal-wrap" id="detailModal"><div class="modal waybill detail-modal" role="dialog" aria-modal="true"><button type="button" class="close" id="detailClose" aria-label="Chiudi">×</button><div id="detail"></div></div></div>
-<div class="user-menu" id="userMenu" role="menu"><button type="button" id="themeToggle">Tema chiaro</button><button type="button" id="logoutBtn">Esci</button></div>
-<script src="assets/app.js?v=2"></script></body></html>
+<script src="assets/workspace.js?v=2"></script><script src="assets/force-map.js?v=1"></script><script src="assets/app.js?v=11"></script></body></html>

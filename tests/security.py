@@ -63,6 +63,18 @@ with tempfile.TemporaryDirectory() as tmp:
                 assert result['error'] == 'Percorso non associato a un progetto a cui hai accesso', result
             result = call(opener, 'save', {'name':'Bad', 'repo_url':'javascript:alert(1)'}, token)
             assert 'URL repository non valido' in result.get('error',''), result
+        token = user_a['csrf']
+        assert call(a, 'account-name', {'name':'Nuovo nome'}, token)['user']['name'] == 'Nuovo nome'
+        assert call(a, 'account-name', {'name':'Senza token'}).get('csrf') is True
+        assert call(a, 'account-password', {'current_password':'sbagliata', 'new_password':'nuovapassword'}, token).get('error')
+        changed = call(a, 'account-password', {'current_password':'password123', 'new_password':'nuovapassword'}, token)
+        assert changed.get('ok') and changed.get('csrf')
+        assert call(a, 'session')['user']['name'] == 'Nuovo nome'
+        call(a, 'logout', {}, changed['csrf'])
+        fresh = call(a, 'session')['csrf']
+        assert call(a, 'login', {'email':'a@example.test', 'password':'password123'}, fresh).get('error')
+        assert call(a, 'login', {'email':'a@example.test', 'password':'nuovapassword'}, fresh).get('ok')
+        assert call(b, 'session')['user']['name'] == 'B'
         print('Security integration checks: OK')
     finally:
         subprocess.run(['docker', 'rm', '-f', container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)

@@ -3,8 +3,7 @@
 document.head.insertAdjacentHTML('beforeend', '<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">');
 
 let projects = [], currentUser = null, registerMode = false, currentView = 'overview',
-    computers = [], githubPreviewUrl = '', csrfToken = '',
-    viewMode = localStorage.viewMode || 'manifest';
+    computers = [], githubPreviewUrl = '', csrfToken = '';
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
@@ -70,11 +69,7 @@ function daysSince(v) {
   const d = parseDate(v);
   return d ? Math.floor((Date.now() - d.getTime()) / 86400000) : null;
 }
-function greeting() {
-  const h = new Date().getHours();
-  const part = h < 6 ? 'Buonanotte' : h < 13 ? 'Buongiorno' : h < 18 ? 'Buon pomeriggio' : 'Buonasera';
-  return `${part}, ${currentUser?.name?.split(' ')[0] || ''}`.trim();
-}
+
 
 /* ---------- stati ---------- */
 function stampFor(p) {
@@ -131,7 +126,7 @@ function showApp() {
   $('#loginScreen').style.display = 'none';
   const n = currentUser.name;
   $('#sideName').textContent = n;
-  $('#greeting').textContent = greeting();
+
   $('#sideAvatar').textContent = initials(n);
   $('#headerAvatar').textContent = initials(n);
 }
@@ -143,101 +138,7 @@ async function load() {
   refreshNotifications();
 }
 
-/* ---------- render principale ---------- */
-function setTaskControls(active) {
-  $('#filter').hidden = active;
-  $('#taskFilter').hidden = !active;
-  $('#taskPriorityFilter').hidden = !active;
-  $('.view-toggle').hidden = active;
-  $('#search').placeholder = active ? 'Cerca task o progetto…' : 'Cerca progetto…';
-}
-
-function render() {
-  const q = ($('#search').value || '').toLowerCase();
-  const f = $('#filter').value;
-  const tasks = projects.flatMap(p => (p.tasks || []).map(t => ({...t, project: p})));
-  const cutoff = new Date(Date.now() - 30 * 86400000);
-  const recent = projects.filter(p => parseDate(p.commit_date) >= cutoff || parseDate(p.updated_at) >= cutoff).length;
-
-  $('#pageTitle').textContent = currentView === 'tasks' ? 'Task'
-    : currentView === 'projects' ? 'Progetti'
-    : currentView === 'computers' ? 'Computer' : 'Panoramica';
-  const attn = attentionItems(tasks);
-  $('#openStat').textContent = attn.length;
-  $('#taskStat').textContent = tasks.filter(t => !+t.done && t.due_date && t.due_date < isoToday()).length;
-  $('#commitStat').textContent = recent;
-  $('#openDelta').textContent = attn.length ? 'da risolvere' : 'tutto ok';
-  $('#navCount').textContent = projects.length;
-  $('#fleetLine').innerHTML = computers.length
-    ? 'Macchine: ' + computers.map(c => `<b>${esc(c.name || 'porto')}</b>`).join(' · ') + ` — ${computers.length} ${computers.length === 1 ? 'macchina registrata' : 'macchine registrate'}`
-    : 'nessuna macchina registrata — <span class="stale">aggiungine una per associare i percorsi locali ai progetti</span>';
-
-  if (currentView === 'computers') { setTaskControls(false); $('#sectionTitle').textContent = 'Macchine registrate'; $('#sectionSubtitle').textContent = 'PC e server con percorsi locali associati'; renderComputers(); return; }
-  if (currentView === 'tasks') { renderTaskCenter(tasks, q); return; }
-
-  setTaskControls(false);
-  const list = projects.filter(p =>
-    (f === 'all' || p.status === f) &&
-    (!q || String(p.name||'').toLowerCase().includes(q)
-        || String(p.description||'').toLowerCase().includes(q)
-        || (p.tasks||[]).some(t => String(t.title||'').toLowerCase().includes(q))));
-
-  const host = $('#projectGrid');
-  const paint = rows => viewMode === 'cards'
-    ? '<div class="cards-grid">' + rows.map(cardHtml).join('') + '</div>'
-    : manifestTable(rows, currentView === 'projects');
-  $('#empty').hidden = list.length > 0;
-
-  if (currentView === 'overview') {
-    $('#sectionTitle').textContent = 'Aggiornati di recente';
-    $('#sectionSubtitle').textContent = 'I progetti modificati di recente — elenco completo in “Progetti”';
-    host.innerHTML = attentionBlock(attn) +
-      (list.length ? paint(list.slice(0, 5)) : '') +
-      (projects.length > 5 ? `<button type="button" class="text-button" onclick="activateView('projects')">Tutti i progetti (${projects.length}) →</button>` : '');
-    $('#empty h3').textContent = 'Nessun progetto';
-    $('#empty p').textContent = 'Crea il primo progetto per iniziare.';
-  } else {
-    $('#sectionTitle').textContent = 'Tutti i progetti';
-    $('#sectionSubtitle').textContent = 'Tutti i progetti, ordinati per ' + ({name:'nome',colli:'task',stamp:'ultimo aggiornamento'}[sortKey]||'ultimo bollo');
-    host.innerHTML = paint(sortList(list));
-    $('#empty h3').textContent = 'Nessun progetto trovato';
-    $('#empty p').textContent = 'Prova a cambiare ricerca o filtro.';
-  }
-
-  host.querySelectorAll('[data-open]').forEach(el => el.onclick = e => {
-    if (e.target.closest('button,a,input,select')) return;
-    detail(+el.dataset.open);
-  });
-  host.querySelectorAll('th[data-sort]').forEach(th => th.onclick = () => {
-    const k = th.dataset.sort;
-    sortDir = sortKey === k ? -sortDir : 1;
-    sortKey = k;
-    render();
-  });
-}
-
-/* ---------- attenzione ---------- */
-function attentionItems(tasks) {
-  const items = [], today = isoToday();
-  projects
-    .filter(p => p.status === 'active' && (daysSince(p.updated_at) ?? 0) >= 14)
-    .forEach(p => items.push({cls:'a', stamp:'inattivo', text:`<b>${esc(p.name)}</b> inattivo da ${daysSince(p.updated_at)} giorni — lo stato potrebbe non essere aggiornato`, act:'Apri', fn:`detail(${p.id})`}));
-  const overdue = tasks.filter(t => !+t.done && t.due_date && t.due_date < today);
-  if (overdue.length) items.push({cls:'r', stamp:'scaduto', text:`<b>${overdue.length}</b> ${overdue.length === 1 ? 'task è' : 'task sono'} in ritardo`, act:'Vai ai task', fn:`activateView('tasks')`});
-  projects.filter(p => !(p.locations || []).length).slice(0, 3)
-    .forEach(p => items.push({cls:'n', stamp:'senza percorso', text:`<b>${esc(p.name)}</b> non è associato a nessuna macchina`, act:'Associa', fn:`detail(${p.id})`}));
-  if (!computers.length) items.push({cls:'r', stamp:'senza macchina', text:'Nessuna macchina registrata — non puoi ancora associare percorsi locali ai progetti', act:'Registra computer', fn:'addComputer()'});
-  return items;
-}
-function attentionBlock(items) {
-  if (!items.length) {
-    return `<div class="attn attn-clear"><span class="stamp g">tutto ok</span><p>nessun elemento da risolvere.</p></div>`;
-  }
-  return `<div class="attn">${items.map(i =>
-    `<div class="attn-row"><span class="stamp ${i.cls}">${i.stamp}</span><p>${i.text}</p><button type="button" class="secondary" onclick="${i.fn}">${i.act}</button></div>`).join('')}</div>`;
-}
-
-/* ---------- ordinamento manifesto ---------- */
+/* ---------- project ordering ---------- */
 let sortKey = 'stamp', sortDir = -1;
 function sortList(list) {
   const val = p => sortKey === 'name' ? (p.name||'').toLowerCase()
@@ -246,83 +147,58 @@ function sortList(list) {
   return [...list].sort((a, b) => (val(a) > val(b) ? 1 : val(a) < val(b) ? -1 : 0) * sortDir);
 }
 
-function manifestTable(list, sortable) {
-  if (!list.length) return '';
-  const arrow = k => sortable && sortKey === k ? (sortDir > 0 ? ' ↑' : ' ↓') : '';
-  const th = (k, label) => sortable ? `<th data-sort="${k}" class="sortable">${label}${arrow(k)}</th>` : `<th>${label}</th>`;
-  const rows = list.map(p => {
-    const ts = p.tasks || [], done = ts.filter(t => +t.done).length;
-    const open = ts.length - done;
-    const colli = ts.length ? `${done}/${ts.length} task` : 'nessun task';
-    const stamp = fmtDate(p.commit_date || p.updated_at);
-    return `<tr data-open="${p.id}">
-      <td class="m-name">${esc(p.name)}<small>${waybillNo(p)}${esc(p.default_branch ? ' · ' + p.default_branch : '')}</small></td>
-      <td>${routeFor(p)}</td>
-      <td class="mono" data-colli="${open}">${colli}</td>
-      <td class="mono">${stamp}</td>
-      <td>${stampFor(p)}</td>
-      <td class="row-menu"><button type="button" class="more" aria-label="Azioni su ${esc(p.name)}" data-menu="${p.id}">⋮</button>
-        <div class="card-menu" id="cardMenu${p.id}">
-          <button type="button" onclick="event.stopPropagation();detail(${p.id})">Apri</button>
-          <button type="button" onclick="event.stopPropagation();editProject(${p.id})">Modifica</button>
-          <button type="button" onclick="event.stopPropagation();syncGit(${p.id})">Aggiorna Git</button>
-          <button type="button" class="delete-link" onclick="event.stopPropagation();deleteProject(${p.id})">Elimina</button>
-        </div></td>
-    </tr>`;
-  }).join('');
-  return `<table class="manifest"><thead><tr>${th('name','Progetto')}<th>Percorso</th>${th('colli','Task')}${th('stamp','Aggiornato')}<th>Stato</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
-}
 
-function cardHtml(p) {
-  const ts = p.tasks || [], done = ts.filter(t => +t.done).length;
-  const quickLink = (p.links || [])[0];
-  return `<article class="project-card" data-open="${p.id}">
-    <div class="card-top"><div class="project-mark">${esc(initials(p.name))}</div>
-      <div class="row-menu"><button type="button" class="more" aria-label="Azioni" data-menu="${p.id}">⋮</button>
-      <div class="card-menu" id="cardMenu${p.id}">
-        <button type="button" onclick="event.stopPropagation();detail(${p.id})">Apri</button>
-        <button type="button" onclick="event.stopPropagation();editProject(${p.id})">Modifica</button>
-        <button type="button" onclick="event.stopPropagation();syncGit(${p.id})">Aggiorna Git</button>
-        <button type="button" class="delete-link" onclick="event.stopPropagation();deleteProject(${p.id})">Elimina</button>
-      </div></div></div>
-    <h3>${esc(p.name)} <span class="mono">${waybillNo(p)}</span></h3>
-    <p class="desc">${esc(p.description) || 'Nessuna descrizione aggiunta.'}</p>
-    ${stampFor(p)}
-    <div class="card-foot">${routeFor(p)}<span>${ts.length ? done + '/' + ts.length + ' task' : 'nessun task'}</span>
-    ${quickLink ? `<a class="card-quick-link" href="${esc(safeUrl(quickLink.url))}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${faviconMarkup(quickLink)}<span>${esc(quickLink.label || quickLink.url)}</span></a>` : ''}</div>
-  </article>`;
-}
-
-function renderTaskCenter(tasks, q) {
-  setTaskControls(true);
-  $('#sectionTitle').textContent = 'Task';
-  $('#sectionSubtitle').textContent = 'Task aperti in tutti i progetti';
-  const filter = $('#taskFilter').value, priority = $('#taskPriorityFilter').value;
-  const today = isoToday(), week = isoAfter(7);
-  const list = tasks.filter(t => !+t.done)
-    .filter(t => { const due = t.due_date || '';
-      return filter === 'all' || (filter === 'today' && due === today) ||
-        (filter === 'week' && due >= today && due <= week) ||
-        (filter === 'overdue' && due && due < today) || (filter === 'nodate' && !due); })
-    .filter(t => priority === 'all' || t.priority === priority)
-    .filter(t => !q || String(t.title||'').toLowerCase().includes(q) || String(t.project.name||'').toLowerCase().includes(q));
-
-  $('#projectGrid').innerHTML = '<div class="task-center">' + list.map(t =>
-    `<article class="task-center-item"><label class="detail-task"><input type="checkbox" onchange="toggleTask(${t.id},${t.project_id},this.checked)"><span><b>${esc(t.title)}</b><small class="task-project">${esc(t.project.name)}</small>${taskDue(t)}<small class="task-priority ${esc(t.priority||'medium')}">${PRIORITY[t.priority]||'Media'}</small></span></label>
-    <div class="task-center-actions"><button type="button" class="secondary" onclick="detail(${t.project_id})">Dettagli</button><button type="button" class="secondary" onclick="editTask(${t.id},${t.project_id})">Modifica</button></div></article>`).join('') + '</div>';
-
-  $('#empty').hidden = list.length > 0;
-  $('#empty h3').textContent = 'Nessun task in questa vista';
-  $('#empty p').textContent = tasks.some(t => !+t.done) ? 'Prova a cambiare filtro o ricerca.' : 'Aggiungi un task a un progetto per iniziare.';
-}
-
-function renderComputers() {
+let mapMachine = 0;
+function renderMap() {
   const host = $('#projectGrid');
+  const nodes = new Map(computers.map(c => [+c.id, c.name]));
+  for (const p of projects) {
+    for (const l of p.locations || []) if (l.computer_id) nodes.set(+l.computer_id, l.computer || 'Computer');
+  }
+  if (mapMachine && !nodes.has(mapMachine)) mapMachine = 0;
+  const available = [...nodes].sort((a,b) => a[1].localeCompare(b[1]));
+  const right = available.filter(([id]) => !mapMachine || id === mapMachine);
+  const left = projects.map(p => ({...p, edges:[...new Set((p.locations || []).map(l => +l.computer_id))].filter(id => nodes.has(id) && (!mapMachine || id === mapMachine))})).filter(p => !mapMachine || p.edges.length);
+  const graphNodes = [
+    ...left.map(p => ({key:'project-' + p.id, id:p.id, name:p.name, type:'project'})),
+    ...right.map(([id,name]) => ({key:'machine-' + id, id, name, type:'machine'}))
+  ];
+  const graphLinks = left.flatMap(p => p.edges.map(id => ['project-' + p.id, 'machine-' + id]));
+  host.innerHTML = `<div class="map-intro"><label>Macchina <select id="mapMachine"><option value="0">Tutte le macchine</option>${available.map(([id,name]) => `<option value="${id}" ${id === mapMachine ? 'selected' : ''}>${esc(name)}</option>`).join('')}</select></label><button type="button" class="secondary" onclick="addComputer()">${hubIcon('plus')} Registra computer</button></div>
+    <div class="map-legend"><span>${hubIcon('folder')} Progetti · ${left.length}</span><span>${hubIcon('machine')} Macchine · ${right.length}</span></div>
+    ${graphNodes.length ? `<div class="force-map">
+      <div id="graphViewport" class="graph-viewport" role="group" aria-label="Grafo dei progetti e delle macchine"></div>
+      <div class="graph-controls" role="group" aria-label="Zoom e posizione">
+        <button type="button" data-graph-action="out" aria-label="Riduci zoom" title="Riduci zoom">−</button>
+        <button type="button" data-graph-action="fit">Centra</button>
+        <button type="button" data-graph-action="in" aria-label="Aumenta zoom" title="Aumenta zoom">+</button>
+      </div>
+    </div>` : '<p class="hub-empty">Associa un percorso a un progetto per costruire la mappa.</p>'}
+    <details class="map-list" ${mapMachine ? 'open' : ''}><summary>Percorsi e gestione computer</summary><div id="mapComputers"></div></details>`;
+  $('#mapMachine').onchange = e => selectMachine(+e.target.value);
+  if (graphNodes.length) {
+    mountForceGraph($('#graphViewport'), graphNodes, graphLinks, node => {
+      if (node.type === 'project') detail(node.id);
+      else selectMachine(node.id === mapMachine ? 0 : node.id);
+    });
+  }
+  renderComputers($('#mapComputers'), mapMachine);
+  if (mapMachine && !computers.some(c => +c.id === mapMachine)) {
+    $('#mapComputers').innerHTML = left.map(p => `<div class="resume-row"><button onclick="detail(${p.id})">${esc(p.name)}</button><span class="mono">${p.locations.filter(l => +l.computer_id === mapMachine).map(l => esc(l.folder)).join('<br>')}</span></div>`).join('');
+  }
+}
+function selectMachine(id) {
+  mapMachine = id;
+  renderMap();
+  $('#mapMachine').focus();
+}
+function renderComputers(host, selected = 0) {
+  const visible = computers.filter(c => !selected || +c.id === selected);
   const moorings = c => projects.flatMap(p => (p.locations || [])
-    .filter(l => +l.computer_id === c.id).map(l => ({p, l})));
-  host.innerHTML = `<div class="computer-toolbar"><h2>Macchine registrate</h2><button type="button" class="primary" onclick="addComputer()">＋ Registra computer</button></div>` +
-    (computers.length
-      ? '<div class="computers-grid">' + computers.map(c => {
+    .filter(l => +l.computer_id === +c.id).map(l => ({p, l})));
+  host.innerHTML = `<div class="computer-toolbar"><span>Cartelle associate alle tue macchine</span><button type="button" class="secondary" onclick="addComputer()">Registra computer</button></div>` +
+    (visible.length
+      ? '<div class="computers-grid">' + visible.map(c => {
           const m = moorings(c);
           return `<article class="computer-card"><span class="port-tag ${m.length ? '' : 'stale'}">${m.length ? 'in uso' : 'libero'}</span>
             <h3>${esc(c.name)}</h3>
@@ -331,8 +207,7 @@ function renderComputers() {
             <div class="port-actions"><button type="button" class="secondary" onclick="moorToPort(${c.id})">Associa progetto</button><button type="button" class="port-remove" aria-label="Rimuovi ${esc(c.name)}" onclick="removeComputer(${c.id})">×</button></div>
           </article>`;
         }).join('') + '</div>'
-      : '<div class="empty"><svg class="empty-mark" viewBox="0 0 48 48"><rect x="6" y="14" width="36" height="20" rx="2"/><path d="M14 40h20M24 34v6"/></svg><h3>Nessun macchina registrata</h3><p>Una macchina è un PC o server dove vivono i tuoi progetti. Registrala, poi associ i percorsi locali.</p><button type="button" class="primary" onclick="addComputer()">＋ Registra la prima macchina</button></div>');
-  $('#empty').hidden = true;
+      : '<div class="empty"><svg class="empty-mark" viewBox="0 0 48 48"><rect x="6" y="14" width="36" height="20" rx="2"/><path d="M14 40h20M24 34v6"/></svg><h3>Nessun computer registrato</h3><p>Una macchina è un PC o server dove vivono i tuoi progetti. Registrala, poi associ i percorsi locali.</p><button type="button" class="primary" onclick="addComputer()">＋ Registra la prima macchina</button></div>');
 }
 async function moorToPort(cid) {
   const writable = projects.filter(p => ['owner','editor'].includes(p.member_role));
@@ -352,10 +227,12 @@ function projectLinkRows(p) {
     `<div class="project-link-row"><a class="project-link" href="${esc(safeUrl(l.url))}" target="_blank" rel="noopener noreferrer">${faviconMarkup(l)}<span><b>${esc(l.label || l.url)}</b><small>${esc(l.url)}</small></span></a>${canEdit ? `<button type="button" class="remove-project-link" aria-label="Rimuovi link" onclick="removeProjectLink(${l.id},${p.id})">×</button>` : ''}</div>`).join('');
 }
 function taskRow(t, pid) {
-  return `<div class="task-row"><label class="detail-task ${+t.done ? 'is-done' : ''}"><input type="checkbox" ${+t.done ? 'checked' : ''} onchange="toggleTask(${t.id},${pid},this.checked)"><span>${esc(t.title)}<small class="task-priority ${esc(t.priority||'medium')}">${PRIORITY[t.priority]||'Media'}</small>${taskDue(t)}</span></label>
-  <span class="task-actions"><button type="button" aria-label="Modifica task" onclick="editTask(${t.id},${pid})">✎</button><button type="button" aria-label="Elimina task" onclick="deleteTask(${t.id},${pid})">×</button></span></div>`;
+  const canEdit = ['owner','editor'].includes(projects.find(p => p.id === pid)?.member_role);
+  return `<div class="task-row"><label class="detail-task ${+t.done ? 'is-done' : ''}"><input type="checkbox" ${+t.done ? 'checked' : ''} ${canEdit ? '' : 'disabled'} onchange="toggleTask(${t.id},${pid},this.checked)"><span>${esc(t.title)}<small class="task-priority ${esc(t.priority||'medium')}">${PRIORITY[t.priority]||'Media'}</small>${taskDue(t)}</span></label>
+  ${canEdit ? `<span class="task-actions"><button type="button" aria-label="Modifica task" onclick="editTask(${t.id},${pid})">✎</button><button type="button" aria-label="Elimina task" onclick="deleteTask(${t.id},${pid})">×</button></span>` : ''}</div>`;
 }
 function detail(id) {
+  $('#accountPage').classList.remove('open');
   const p = projects.find(x => x.id === id);
   if (!p) return;
   const tasks = p.tasks || [], locations = p.locations || [];
@@ -364,35 +241,68 @@ function detail(id) {
     ? `<button type="button" class="add-reveal" onclick="this.hidden=true;this.nextElementSibling.hidden=false;this.nextElementSibling.querySelector('input,select')?.focus()">${label}</button><div class="add-line" hidden>${inner}</div>`
     : '';
   $('#detail').innerHTML = `
-    <div class="detail-head"><h2>${esc(p.name)}</h2><span class="waybill-no">${waybillNo(p)}</span></div>
-    <div class="detail-route">${routeFor(p)}<span class="detail-route-right">${stampFor(p)}</span></div>
+    <div class="detail-head"><div><h1>${esc(p.name)}</h1></div>${canEdit ? `<div class="detail-actions">${p.member_role === 'owner' ? `<button type="button" class="secondary" onclick="shareProject(${p.id})">Condividi</button>` : ''}<button type="button" class="secondary" onclick="editProject(${p.id})">Modifica progetto</button>${p.member_role === 'owner' ? `<button type="button" class="danger" onclick="deleteProject(${p.id})">Elimina</button>` : ''}</div>` : ''}</div>
+    <div class="detail-route">${stampFor(p)}<span class="detail-role">${({owner:'Proprietario',editor:'Editor',viewer:'Visualizzatore'})[p.member_role] || ''}</span></div>
     ${p.description ? `<p class="detail-desc">${esc(p.description)}</p>` : ''}
-    <div class="detail-section"><h3>Percorsi e repository</h3>
+    <div class="project-layout"><div class="detail-section detail-tasks"><h3>Task · ${tasks.filter(t => !+t.done).length} da completare</h3>
+      ${canEdit ? `<div class="add-line quick-task"><input id="newTask" placeholder="Scrivi un nuovo task…" aria-label="Nuovo task"><select id="newTaskPriority" aria-label="Priorità"><option value="medium">Media</option><option value="high">Alta</option><option value="low">Bassa</option></select><input id="newTaskDue" type="date" aria-label="Scadenza"><button type="button" onclick="addTask(${p.id})">Aggiungi</button></div>` : ''}
+      ${[...tasks].sort((a,b) => +a.done - +b.done || (a.due_date || '9999').localeCompare(b.due_date || '9999')).map(t => taskRow(t, p.id)).join('') || '<p class="sub">Nessun task. Aggiungine uno per iniziare.</p>'}</div>
+    <div class="project-resources"><div class="detail-section"><h3>Percorsi e repository</h3>
       ${locations.map(l => `<div class="location"><span><b>${esc(l.computer || 'Porto')}</b></span><span class="mono">${esc(l.folder)}</span><span>${canEdit ? `<button type="button" aria-label="Modifica percorso" onclick="editLocation(${l.id},${p.id})">✎</button><button type="button" aria-label="Rimuovi percorso" onclick="removeLocation(${l.id},${p.id})">×</button>` : ''}</span></div>`).join('') || '<p class="sub">Nessun percorso locale associato.</p>'}
       ${reveal('＋ Associa un percorso', `<select id="locationComputer" aria-label="Macchina">${computers.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><input id="newFolder" placeholder="/percorso/della/repo"><button type="button" aria-label="Aggiungi percorso" onclick="addLocation(${p.id})">＋</button>`)}
       ${canEdit && !computers.length ? `<button type="button" class="text-button" onclick="addComputer()">Registra prima una macchina →</button>` : ''}
-      ${p.repo_url ? `<div class="detail-repo"><a class="link" target="_blank" rel="noopener" href="${esc(safeUrl(p.repo_url))}">${esc(p.repo_url)}</a>
+      ${p.repo_url || locations.length ? `<div class="detail-repo">${p.repo_url ? `<a class="link" target="_blank" rel="noopener" href="${esc(safeUrl(p.repo_url))}">${esc(p.repo_url)}</a>` : ''}
         <p class="sub">Ultimo commit: <b>${esc(p.last_commit) || 'non indicato'}</b>${p.commit_date ? ' · ' + esc(fmtDate(p.commit_date)) : ''}${p.default_branch ? ' · <span class="mono">' + esc(p.default_branch) + '</span>' : ''}</p>
         ${canEdit ? `<button type="button" class="secondary" onclick="syncGit(${p.id})">Aggiorna da repository</button> <button type="button" class="secondary" onclick="showTree(${p.id})">Git tree</button>` : ''}</div>` : ''}</div>
-    <div class="detail-section"><h3>Task · ${tasks.filter(t => !+t.done).length} da completare</h3>
-      ${tasks.map(t => taskRow(t, p.id)).join('') || '<p class="sub">Nessun task aperto.</p>'}
-      ${reveal('＋ Aggiungi task', `<input id="newTask" placeholder="Aggiungi un task…"><select id="newTaskPriority" aria-label="Priorità"><option value="medium">Media</option><option value="high">Alta</option><option value="low">Bassa</option></select><input id="newTaskDue" type="date" aria-label="Scadenza"><button type="button" aria-label="Aggiungi task" onclick="addTask(${p.id})">＋</button>`)}</div>
     <div class="detail-section"><h3>Collegamenti</h3>
       ${projectLinkRows(p) || '<p class="sub">Nessun collegamento registrato.</p>'}
       ${reveal('＋ Aggiungi collegamento', `<input id="newLinkLabel" placeholder="Nome (es. Documentazione)"><input id="newLinkUrl" type="url" placeholder="https://..."><button type="button" aria-label="Aggiungi link" onclick="addProjectLink(${p.id})">＋</button>`)}</div>
-    ${canEdit ? `<div class="detail-actions">
-      ${p.member_role === 'owner' ? `<button type="button" class="secondary" onclick="shareProject(${p.id})">Condividi</button>` : ''}
-      <button type="button" class="secondary" onclick="editProject(${p.id})">Modifica</button>
-      ${p.member_role === 'owner' ? `<button type="button" class="danger" onclick="deleteProject(${p.id})">Elimina</button>` : ''}</div>` : ''}`;
+    <section class="detail-section"><h3>${hubIcon('people')} Collaboratori</h3><div id="projectMembers" aria-live="polite">Caricamento…</div></section>
+    </div></div>`;
+  loadMembers(p);
+  $('#detailModal').dataset.projectId = id;
   $('#detailModal').classList.add('open');
+  $('#pageTitle').textContent = p.name;
+  window.scrollTo(0, 0);
+}
+
+async function loadMembers(project) {
+  const target = $('#projectMembers');
+  if (!target) return;
+  try {
+    const members = await api('members', {project_id:project.id});
+    const roles = {owner:'Proprietario',editor:'Editor',viewer:'Visualizzatore'};
+    target.innerHTML = members.map(member => `<div class="member-row"><span class="avatar" aria-hidden="true">${esc(initials(member.name))}</span><div><strong>${esc(member.name)}</strong><small>${roles[member.role] || 'Membro'}</small></div>${project.member_role === 'owner' && +member.id !== +project.user_id ? `<button type="button" class="secondary" onclick="removeProjectMember(${project.id},${member.id})">Rimuovi</button>` : ''}</div>`).join('') || '<p class="sub">Nessun collaboratore registrato.</p>';
+  } catch(e) { target.textContent = e.message; }
+}
+async function removeProjectMember(projectId, userId) {
+  if (!await uiConfirm({title:'Rimuovere il collaboratore?', message:'Il collaboratore perderà accesso al progetto.', confirm:'Rimuovi', danger:true})) return;
+  try {
+    await api('unshare', {project_id:projectId, user_id:userId});
+    if ($('#detailModal').dataset.projectId === String(projectId)) loadMembers(projects.find(p => p.id === projectId));
+    notice('Accesso rimosso');
+  } catch(e) { notice(e.message, true); }
 }
 
 /* ---------- azioni ---------- */
+async function quickAddTask() {
+  const writable = projects.filter(p => ['owner', 'editor'].includes(p.member_role));
+  if (!writable.length) return notice('Crea prima un progetto per aggiungere un task.', true);
+  const values = await uiPrompt({title:'Nuovo task', message:'Scegli il progetto e descrivi cosa fare.', confirm:'Aggiungi task', fields:[
+    {name:'project', label:'Progetto', type:'select', options:writable.map(p => [p.id, p.name])},
+    {name:'title', label:'Task', placeholder:'Cosa devi fare?', required:true},
+    {name:'priority', label:'Priorità', type:'select', options:[['medium','Media'],['high','Alta'],['low','Bassa']]},
+    {name:'due_date', label:'Scadenza', type:'date'}]});
+  if (!values) return;
+  if (!values.title.trim()) return notice('Scrivi il nome del task.', true);
+  try { await api('task', {project_id:+values.project, title:values.title.trim(), priority:values.priority, due_date:values.due_date}); await load(); notice('Task aggiunto'); }
+  catch(e) { notice(e.message, true); }
+}
 async function addTask(pid) {
   const title = $('#newTask').value.trim();
   const priority = $('#newTaskPriority')?.value || 'medium';
   const due_date = $('#newTaskDue')?.value || '';
-  if (!title) return;
+  if (!title) { $('#newTask').focus(); return notice('Scrivi il nome del task.', true); }
   try { await api('task', {project_id: pid, title, priority, due_date}); await load(); detail(pid); }
   catch(e) { notice(e.message, true); }
 }
@@ -410,13 +320,13 @@ async function editTask(id, pid) {
     {name:'due_date', label:'Scadenza', type:'date', value:t.due_date||''}]});
   if (!v) return;
   try { await api('task', {id, project_id: pid, title: v.title, done: t.done, priority: v.priority, due_date: v.due_date}); await load();
-    if (currentView === 'tasks') render(); else if ($('#detailModal').classList.contains('open')) detail(pid); else render();
+    if ($('#detailModal').classList.contains('open')) detail(pid);
     notice('Task aggiornato'); } catch(e) { notice(e.message, true); }
 }
 async function deleteTask(id, pid) {
   if (!await uiConfirm({title:'Eliminare task?', message:'Il task verrà rimosso definitivamente.', confirm:'Elimina', danger:true})) return;
   try { await api('delete-task', {id, project_id: pid}); await load();
-    if (currentView === 'tasks') render(); else if ($('#detailModal').classList.contains('open')) detail(pid); else render();
+    if ($('#detailModal').classList.contains('open')) detail(pid);
     notice('Task eliminato'); } catch(e) { notice(e.message, true); }
 }
 async function addProjectLink(pid) {
@@ -480,7 +390,6 @@ async function showTree(id) {
   } catch(e) { notice(e.message, true); }
 }
 function editProject(id) {
-  $('#detailModal').classList.remove('open');
   openModal(projects.find(p => p.id === id));
 }
 async function deleteProject(id) {
@@ -493,7 +402,7 @@ async function shareProject(id) {
     {name:'email', label:'Email utente', type:'email', placeholder:'utente@email.it', required:true},
     {name:'role', label:'Ruolo', type:'select', options:[['viewer','Visualizzatore'],['editor','Editor']]}]});
   if (!v) return;
-  try { await api('share', {project_id: id, email: v.email, role: v.role}); notice('Progetto condiviso'); await refreshNotifications(); }
+  try { await api('share', {project_id: id, email: v.email, role: v.role}); notice('Progetto condiviso'); if ($('#detailModal').dataset.projectId === String(id)) loadMembers(projects.find(p => p.id === id)); await refreshNotifications(); }
   catch(e) { notice(e.message, true); }
 }
 
@@ -505,7 +414,9 @@ function openModal(p) {
   $('#modalNo').textContent = p ? waybillNo(p) : 'nuovo';
   $('#projectId').value = p?.id || '';
   $('#gitPreview').hidden = true;
-  ['name','description','status','provider','repo_url'].forEach(k => $('#'+k).value = p?.[k] || ($('#'+k).tagName === 'SELECT' ? $('#'+k).value : ''));
+  $('#projectForm').reset();
+  ['name','description','status','provider','repo_url'].forEach(k => { if (p?.[k] != null) $('#'+k).value = p[k]; });
+  setTimeout(() => $('#name').focus(), 0);
 }
 async function loadGithubInfo() {
   const url = $('#repo_url').value.trim();
@@ -578,6 +489,7 @@ function uiDialog({title, message, fields = [], confirm = 'Conferma', cancel = '
       if (f.type !== 'select') input.type = f.type || 'text';
       input.placeholder = f.placeholder || ''; input.value = f.value || ''; input.required = !!f.required;
       if (f.options) f.options.forEach(o => { const op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; input.append(op); });
+      if (f.value != null) input.value = f.value;
       label.append(input); box.append(label); controls.push(input);
     });
     const actions = document.createElement('div'); actions.className = 'ui-dialog-actions';
@@ -601,22 +513,31 @@ const uiConfirm = o => uiDialog({...o, confirmation: true});
 /* ---------- navigazione ---------- */
 function activateView(view) {
   currentView = view;
-  document.querySelectorAll('.nav').forEach(x => x.classList.toggle('active', x.dataset.view === view));
-  document.querySelectorAll('.mobile-nav button').forEach(x => x.classList.toggle('active', x.dataset.view === view));
+  $('#detailModal').classList.remove('open');
+  $('#accountPage').classList.remove('open');
+  $('#search').value = '';
+  $('.filters').open = false;
+  document.querySelectorAll('.nav').forEach(button => {
+    const active = button.dataset.view === view;
+    button.classList.toggle('active', active);
+    if (active) button.setAttribute('aria-current','page');
+    else button.removeAttribute('aria-current');
+  });
   render();
+  window.scrollTo(0,0);
 }
 
 /* ---------- wiring ---------- */
 document.querySelectorAll('.nav').forEach(n => n.onclick = () => activateView(n.dataset.view));
 $('#newBtn').onclick = () => openModal();
-$('#emptyBtn').onclick = () => openModal();
+for (const id of ['#newBtn','#quickTaskBtn']) $(id).insertAdjacentHTML('afterbegin',hubIcon('plus'));
+$('#quickTaskBtn').onclick = quickAddTask;
 $('#close').onclick = closeModal;
 $('#cancel').onclick = closeModal;
-$('#detailClose').onclick = () => $('#detailModal').classList.remove('open');
+$('#detailClose').onclick = () => { $('#detailModal').classList.remove('open'); render(); };
 $('#search').oninput = render;
 $('#filter').onchange = render;
-$('#taskFilter').onchange = render;
-$('#taskPriorityFilter').onchange = render;
+$('#projectSort').onchange = e => { sortKey = e.target.value; sortDir = sortKey === 'name' ? 1 : -1; render(); };
 $('#repo_url').addEventListener('blur', loadGithubInfo);
 
 $('#projectForm').onsubmit = async e => {
@@ -631,6 +552,7 @@ $('#projectForm').onsubmit = async e => {
   try {
     const x = await api('save', d);
     closeModal(); await load();
+    if (p && $('#detailModal').classList.contains('open')) detail(x.id);
     notice(x.remote ? 'Progetto salvato (dati GitHub aggiornati)' : 'Progetto salvato');
   } catch(x) { notice(x.message, true); }
 };
@@ -653,16 +575,21 @@ $('#authSwitch').onclick = () => {
   $('#authSwitch').textContent = registerMode ? 'Hai già un account? Accedi' : 'Non hai un account? Registrati';
 };
 
-/* menu utente */
-function positionUserMenu() {
-  const m = $('#userMenu'), r = $('#profileMore').getBoundingClientRect();
-  m.style.left = Math.max(8, r.left - 120) + 'px';
-  m.style.bottom = (window.innerHeight - r.top + 8) + 'px';
-  m.style.top = 'auto';
+/* account */
+function openAccount() {
+  $('#detailModal').classList.remove('open');
+  $('#accountName').value = currentUser.name;
+  $('#accountEmail').value = currentUser.email;
+  $('#passwordForm').reset();
+  $('#accountPage').classList.add('open');
+  $('#pageTitle').textContent = 'Account';
+  window.scrollTo(0, 0);
 }
-function toggleUserMenu() { positionUserMenu(); $('#userMenu').classList.toggle('open'); }
-$('#profileMore').onclick = toggleUserMenu;
-$('#headerAvatar').onclick = toggleUserMenu;
+$('#profileMore').onclick = openAccount;
+$('#headerAvatar').onclick = openAccount;
+$('#accountBack').onclick = () => activateView('overview');
+$('#accountForm').onsubmit = async e => { e.preventDefault(); try { const x = await api('account-name', {name:$('#accountName').value}); currentUser = x.user; showApp(); notice('Nome aggiornato'); } catch(err) { notice(err.message, true); } };
+$('#passwordForm').onsubmit = async e => { e.preventDefault(); if ($('#newPassword').value !== $('#confirmPassword').value) return notice('Le nuove password non coincidono.', true); try { await api('account-password', {current_password:$('#currentPassword').value, new_password:$('#newPassword').value}); e.target.reset(); notice('Password aggiornata'); } catch(err) { notice(err.message, true); } };
 $('#logoutBtn').onclick = async () => { await api('logout', {}); location.reload(); };
 $('#themeToggle').onclick = () => {
   document.body.classList.toggle('light');
@@ -670,7 +597,7 @@ $('#themeToggle').onclick = () => {
   $('#themeToggle').textContent = light ? 'Tema scuro' : 'Tema chiaro';
   localStorage.theme = light ? 'light' : 'dark';
 };
-if (localStorage.theme === 'light') { document.body.classList.add('light'); $('#themeToggle').textContent = 'Tema scuro'; }
+if (localStorage.theme !== 'dark') { document.body.classList.add('light'); $('#themeToggle').textContent = 'Tema scuro'; }
 
 /* notifiche click */
 $('#notifBtn').onclick = () => $('#notificationPanel')?.classList.toggle('open');
@@ -688,37 +615,23 @@ document.addEventListener('click', e => {
   }
   const panel = $('#notificationPanel'), bell = $('#notifBtn');
   if (panel?.classList.contains('open') && !panel.contains(e.target) && !bell.contains(e.target)) panel.classList.remove('open');
-  const um = $('#userMenu');
-  if (um.classList.contains('open') && !um.contains(e.target) && !$('#profileMore').contains(e.target) && !$('#headerAvatar').contains(e.target)) um.classList.remove('open');
 });
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape' || document.querySelector('.ui-dialog-wrap')) return;
-  if ($('#detailModal').classList.contains('open')) $('#detailModal').classList.remove('open');
-  else if ($('#modal').classList.contains('open')) closeModal();
+  if ($('#modal').classList.contains('open')) { closeModal(); return; }
+  if ($('#accountPage').classList.contains('open')) activateView('overview');
+  else if ($('#detailModal').classList.contains('open')) { $('#detailModal').classList.remove('open'); render(); }
 });
-$('#detailModal').addEventListener('click', e => { if (e.target === e.currentTarget) $('#detailModal').classList.remove('open'); });
 $('#modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal(); });
 
-/* view toggle */
-document.querySelectorAll('.view-btn').forEach(b => b.onclick = () => {
-  viewMode = b.dataset.viewmode;
-  localStorage.viewMode = viewMode;
-  document.querySelectorAll('.view-btn').forEach(x => x.classList.toggle('active', x === b));
-  render();
-});
-if (viewMode === 'cards') document.querySelectorAll('.view-btn').forEach(x => x.classList.toggle('active', x.dataset.viewmode === 'cards'));
-
-/* mobile nav */
-const mobileNav = document.createElement('nav');
+/* Reuse the same navigation on small screens. */
+const mobileNav = $('.app > aside nav').cloneNode(true);
 mobileNav.className = 'mobile-nav';
-mobileNav.setAttribute('aria-label', 'Navigazione principale');
-mobileNav.innerHTML =
-  '<button type="button" data-view="overview"><svg viewBox="0 0 16 16"><path d="M2 13V6l6-4 6 4v7"/></svg>Panoramica</button>' +
-  '<button type="button" data-view="projects"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1"/><path d="M2 7h12M6 7v6"/></svg>Progetti</button>' +
-  '<button type="button" data-view="tasks"><svg viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-8"/></svg>Task</button>' +
-  '<button type="button" data-view="computers"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="8" rx="1"/><path d="M8 11v3M5 14h6"/></svg>Computer</button>';
+mobileNav.querySelector('[id]')?.removeAttribute('id');
+mobileNav.querySelectorAll('button').forEach(button => {
+  button.onclick = () => activateView(button.dataset.view);
+});
 document.body.append(mobileNav);
-mobileNav.querySelectorAll('button').forEach(x => x.onclick = () => activateView(x.dataset.view));
 mobileNav.querySelector('button[data-view="overview"]').classList.add('active');
 
 /* OIDC opzionale */
